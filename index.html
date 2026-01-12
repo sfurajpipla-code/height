@@ -7,11 +7,14 @@
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
+        [v-cloak] { display: none; }
+        body { background-color: #000; overflow: hidden; margin: 0; }
+        video { object-fit: cover; width: 100vw; height: 100vh; position: absolute; inset: 0; }
+
         /* Precision Reticle */
         .crosshair {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            width: 50px; height: 50px; border: 1px solid rgba(255,255,255,0.7); border-radius: 50%; z-index: 50;
-            pointer-events: none;
+            width: 50px; height: 50px; border: 1px solid rgba(255,255,255,0.7); border-radius: 50%; z-index: 45; pointer-events: none;
         }
         .crosshair::before { content: ''; position: absolute; top: 50%; left: 10%; width: 80%; height: 1px; background: rgba(255,255,255,0.8); transform: translateY(-50%); }
         .crosshair::after { content: ''; position: absolute; left: 50%; top: 10%; height: 80%; width: 1px; background: rgba(255,255,255,0.8); transform: translateX(-50%); }
@@ -19,36 +22,41 @@
         .is-level { border: 2px solid #4ade80 !important; box-shadow: 0 0 20px #4ade80; }
         .is-level::before, .is-level::after { background: #4ade80 !important; }
 
-        video { object-fit: cover; width: 100vw; height: 100vh; }
-
-        .thumb-controls {
-            position: absolute; right: 20px; 
-            bottom: calc(30px + env(safe-area-inset-bottom));
-            display: flex; flex-direction: column; gap: 20px; z-index: 100;
+        /* Floating Controls */
+        .thumb-right {
+            position: absolute; right: 20px; bottom: max(30px, env(safe-area-inset-bottom));
+            display: flex; flex-direction: column; gap: 20px; z-index: 60;
         }
+        .thumb-left {
+            position: absolute; left: 20px; bottom: max(30px, env(safe-area-inset-bottom));
+            z-index: 60;
+        }
+        
         .btn-float {
             width: 85px; height: 85px; border-radius: 50%;
             display: flex; align-items: center; justify-content: center;
             font-weight: 900; font-size: 13px; text-align: center;
             box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 2px solid rgba(255,255,255,0.3);
-            transition: all 0.1s; touch-action: manipulation;
+            transition: all 0.1s; touch-action: manipulation; line-height: 1.1;
         }
-        .btn-float:active { transform: scale(0.9); background-color: rgba(255,255,255,0.2); }
-        
-        [v-cloak] { display: none; }
+        .btn-float:active { transform: scale(0.95); opacity: 0.8; }
+
+        .sensor-pulse {
+            position: absolute; bottom: 0; left: 0; height: 6px; background: #3b82f6;
+            transition: width 0.05s linear; z-index: 70;
+        }
     </style>
 </head>
-<body class="bg-black text-white overflow-hidden">
+<body class="text-white">
 
 <div id="app" v-cloak class="relative h-screen w-screen">
-    <video ref="videoRef" autoplay playsinline muted class="absolute inset-0"></video>
+    <video ref="videoRef" autoplay playsinline muted></video>
     
+    <div v-if="isWalking" class="sensor-pulse" :style="{ width: sensorPulseWidth + '%' }"></div>
+
     <div class="absolute inset-0 pointer-events-none z-40">
         <svg class="w-full h-full">
-            <line v-if="baseLockedY !== null" 
-                :x1="centerX" :y1="baseLockedY" 
-                :x2="centerX" :y2="topLockedY || currentY" 
-                stroke="#fbbf24" stroke-width="4" stroke-dasharray="8,4" />
+            <line v-if="baseLockedY !== null" :x1="centerX" :y1="baseLockedY" :x2="centerX" :y2="topLockedY || currentY" stroke="#fbbf24" stroke-width="4" stroke-dasharray="8,4" />
             <circle v-if="baseLockedY !== null" :cx="centerX" :cy="baseLockedY" r="14" fill="#4ade80" stroke="white" stroke-width="2" />
             <circle v-if="topLockedY !== null" :cx="centerX" :cy="topLockedY" r="14" fill="#3b82f6" stroke="white" stroke-width="2" />
         </svg>
@@ -56,134 +64,84 @@
 
     <div class="crosshair" :class="{'is-level': isLevel}"></div>
 
-    <div class="absolute top-10 left-6 pointer-events-none">
-        <div class="bg-black/70 backdrop-blur-xl p-5 rounded-3xl border border-white/20 shadow-2xl">
-            <div class="flex items-center gap-3 mb-1">
-                <p class="text-[10px] text-gray-400 font-black uppercase tracking-widest">Distance</p>
-                <div v-if="isWalking" class="w-2 h-2 bg-red-500 rounded-full animate-ping"></div>
-            </div>
-            <p class="text-3xl font-black text-white leading-none">{{ slantDistance.toFixed(1) }}m</p>
-            <p class="text-[10px] text-gray-500 mt-1 uppercase">{{ stepCount }} steps detected</p>
-            
-            <div v-if="calculatedHeight" class="mt-4 pt-4 border-t border-white/10">
-                <p class="text-[10px] text-green-400 font-black uppercase tracking-widest mb-1">Tree Height</p>
-                <p class="text-5xl font-black text-white leading-none">{{ calculatedHeight }}m</p>
+    <div class="absolute top-12 left-6 pointer-events-none">
+        <div class="bg-black/70 backdrop-blur-xl p-5 rounded-3xl border border-white/20">
+            <p class="text-[10px] text-gray-400 font-black uppercase tracking-widest">Ground Dist: <span class="text-white">{{ slantDistance.toFixed(1) }}m</span></p>
+            <p class="text-[10px] text-gray-400 font-black uppercase tracking-widest">Steps: <span class="text-white">{{ stepCount }}</span></p>
+            <div v-if="calculatedHeight" class="mt-2 pt-2 border-t border-white/10">
+                <p class="text-[10px] text-green-400 font-black uppercase">Height: <span class="text-white text-2xl ml-2">{{ calculatedHeight }}m</span></p>
             </div>
         </div>
     </div>
 
-    <div class="thumb-controls">
-        <button @click="showSettings = true" class="btn-float bg-zinc-900/80 backdrop-blur-md text-white text-2xl">⚙️</button>
+    <div class="thumb-left" v-if="permissionGranted && baseAngle !== null">
+        <button @click="resetSession" class="btn-float bg-yellow-500 text-black uppercase">New<br>Entry</button>
+    </div>
+
+    <div class="thumb-right">
+        <button @click="showSettings = true" class="btn-float bg-zinc-900/90 text-white text-2xl">⚙️</button>
         
         <button v-if="permissionGranted && distMode === 'walk'" @click="togglePedometer" 
             :class="isWalking ? 'bg-red-600 animate-pulse border-white' : 'bg-white text-black'"
-            class="btn-float uppercase tracking-tighter">
+            class="btn-float uppercase">
             {{ isWalking ? 'Stop' : 'Walk' }}
         </button>
 
         <div v-if="permissionGranted" class="flex flex-col gap-4">
             <button v-if="baseAngle === null" @click="markBase" class="btn-float bg-green-600 text-white uppercase">Lock<br>Base</button>
-            <template v-else>
-                <button v-if="topAngle === null" @click="markTop" class="btn-float bg-blue-600 text-white uppercase">Lock<br>Top</button>
-                <button @click="resetSession" class="btn-float bg-yellow-500 text-black uppercase leading-tight">New<br>Tree</button>
-            </template>
+            <button v-else-if="topAngle === null" @click="markTop" class="btn-float bg-blue-600 text-white uppercase">Lock<br>Top</button>
         </div>
         
-        <button v-else @click="requestPermissions" class="btn-float bg-blue-500 text-white uppercase">Start<br>Sensors</button>
+        <button v-else @click="requestPermissions" class="btn-float bg-blue-500 text-white uppercase">Enable<br>App</button>
     </div>
 
-    <div v-if="showSettings" class="absolute inset-0 z-[200] bg-black/95 flex items-center justify-center p-8 backdrop-blur-2xl">
-        <div class="bg-zinc-900 w-full max-w-xs rounded-[2.5rem] p-8 border border-white/10 shadow-2xl">
-            <h2 class="text-2xl font-black mb-8 text-center">Settings</h2>
-            
-            <div class="space-y-8">
-                <div class="bg-white/5 p-1.5 rounded-2xl flex">
-                    <button @click="distMode = 'walk'" :class="distMode === 'walk' ? 'bg-white text-black' : 'text-white'" class="flex-1 py-3 rounded-xl font-bold text-sm">Pedometer</button>
-                    <button @click="distMode = 'manual'" :class="distMode === 'manual' ? 'bg-white text-black' : 'text-white'" class="flex-1 py-3 rounded-xl font-bold text-sm">Manual</button>
-                </div>
-
-                <div v-if="distMode === 'manual'">
-                    <label class="block text-xs font-black text-gray-500 mb-3 uppercase tracking-widest text-center">Enter Distance (m)</label>
-                    <input type="number" v-model.number="slantDistance" class="w-full bg-white/10 py-4 rounded-2xl text-center text-3xl font-black border border-white/10 outline-none">
-                </div>
-
-                <div v-if="distMode === 'walk'" class="text-center">
-                    <p class="text-xs font-black text-gray-400 mb-4 uppercase">Stride: {{ strideLength }}m</p>
-                    <button @click="startCalibration" class="w-full bg-blue-600 py-4 rounded-2xl font-black text-sm uppercase tracking-widest shadow-lg">📏 Calibrate 5m</button>
-                </div>
+    <div v-if="showSettings" class="absolute inset-0 z-50 bg-black/95 flex items-center justify-center p-8 backdrop-blur-2xl">
+        <div class="bg-zinc-900 w-full max-w-xs rounded-[2.5rem] p-8 border border-white/10 shadow-2xl text-center">
+            <h2 class="text-2xl font-black mb-6 uppercase">Settings</h2>
+            <div class="bg-white/5 p-1.5 rounded-2xl flex mb-6">
+                <button @click="distMode = 'walk'" :class="distMode === 'walk' ? 'bg-white text-black' : 'text-white'" class="flex-1 py-2 rounded-xl font-bold">Walk</button>
+                <button @click="distMode = 'manual'" :class="distMode === 'manual' ? 'bg-white text-black' : 'text-white'" class="flex-1 py-2 rounded-xl font-bold">Manual</button>
             </div>
-            <button @click="showSettings = false" class="w-full mt-10 bg-green-500 text-black py-4 rounded-2xl font-black uppercase tracking-widest">Done</button>
+            <button @click="startCalibration" class="w-full bg-blue-600 py-4 rounded-2xl font-black mb-4 uppercase">📏 Calibrate 5m</button>
+            <button @click="showSettings = false" class="w-full bg-green-500 text-black py-4 rounded-2xl font-black uppercase">Close</button>
         </div>
     </div>
 </div>
 
 <script>
 const { createApp, ref, computed } = Vue;
-
 createApp({
     setup() {
-        const videoRef = ref(null);
-        const currentTilt = ref(0);
-        const baseAngle = ref(null);
-        const topAngle = ref(null);
-        const slantDistance = ref(0);
-        const isWalking = ref(false);
-        const stepCount = ref(0);
-        const permissionGranted = ref(false);
-        const showSettings = ref(false);
-        const distMode = ref('walk');
-        const strideLength = ref(0.75);
+        const videoRef = ref(null), currentTilt = ref(0), baseAngle = ref(null), topAngle = ref(null);
+        const slantDistance = ref(0), isWalking = ref(false), stepCount = ref(0), permissionGranted = ref(false);
+        const showSettings = ref(false), distMode = ref('walk'), strideLength = ref(0.7), sensorPulseWidth = ref(0);
+        const centerX = window.innerWidth / 2, currentY = window.innerHeight / 2;
 
-        const centerX = window.innerWidth / 2;
-        const currentY = window.innerHeight / 2;
-        const vSensitivity = 25;
-
-        const baseLockedY = computed(() => baseAngle.value === null ? null : currentY + (baseAngle.value - currentTilt.value) * vSensitivity);
-        const topLockedY = computed(() => topAngle.value === null ? null : currentY + (topAngle.value - currentTilt.value) * vSensitivity);
-        const isLevel = computed(() => Math.abs(currentTilt.value) < 0.8);
+        const baseLockedY = computed(() => baseAngle.value === null ? null : currentY + (baseAngle.value - currentTilt.value) * 25);
+        const topLockedY = computed(() => topAngle.value === null ? null : currentY + (topAngle.value - currentTilt.value) * 25);
+        const isLevel = computed(() => Math.abs(currentTilt.value) < 1);
 
         const requestPermissions = async () => {
             try {
-                // 1. Camera
                 const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
                 videoRef.value.srcObject = stream;
-
-                // 2. iOS Motion Permission
                 if (typeof DeviceOrientationEvent.requestPermission === 'function') {
                     const res = await DeviceOrientationEvent.requestPermission();
-                    if (res === 'granted') {
-                        startSensors();
-                        permissionGranted.value = true;
-                    }
-                } else {
-                    // Android/PC
-                    startSensors();
-                    permissionGranted.value = true;
-                }
-            } catch (e) {
-                alert("Permission denied. Ensure you are on HTTPS.");
-            }
+                    if (res === 'granted') { startSensors(); permissionGranted.value = true; }
+                } else { startSensors(); permissionGranted.value = true; }
+            } catch (e) { alert("Enable Motion & Camera in browser settings."); }
         };
 
         const startSensors = () => {
-            // Orientation tracking
-            window.addEventListener('deviceorientation', (e) => {
-                currentTilt.value = e.beta - 90;
-            });
-
-            // Step tracking (Accelerometer)
+            window.addEventListener('deviceorientation', (e) => { currentTilt.value = e.beta - 90; });
             let lastMag = 0;
             window.addEventListener('devicemotion', (e) => {
-                if (!isWalking.value || distMode.value !== 'walk') return;
-                
                 const acc = e.accelerationIncludingGravity;
                 if (!acc) return;
-
                 const mag = Math.sqrt(acc.x**2 + acc.y**2 + acc.z**2);
+                if (isWalking.value) { sensorPulseWidth.value = Math.min(100, mag * 8); }
                 const delta = Math.abs(mag - lastMag);
-
-                // Sensitivity threshold set to 3.0 (easier to detect)
-                if (delta > 3.0) {
+                if (isWalking.value && delta > 2.8) { // MORE SENSITIVE (Reduced from 3.5)
                     stepCount.value++;
                     slantDistance.value = stepCount.value * strideLength.value;
                     if (navigator.vibrate) navigator.vibrate(40);
@@ -192,40 +150,31 @@ createApp({
             });
         };
 
-        const startCalibration = () => {
-            const steps = prompt("How many steps did you take to walk 5 meters?");
-            if (steps && steps > 0) {
-                strideLength.value = parseFloat((5 / steps).toFixed(2));
-                alert(`Stride set to: ${strideLength.value}m`);
-            }
-        };
-
         const togglePedometer = () => {
+            if (!permissionGranted.value) { requestPermissions(); return; }
             isWalking.value = !isWalking.value;
-            if (isWalking.value) {
-                stepCount.value = 0;
-                slantDistance.value = 0;
-            }
+            if (isWalking.value) { stepCount.value = 0; slantDistance.value = 0; }
         };
 
-        const markBase = () => { baseAngle.value = currentTilt.value; };
-        const markTop = () => { topAngle.value = currentTilt.value; };
+        const startCalibration = () => {
+            const steps = prompt("Walk exactly 5m. How many steps did you take?");
+            if (steps > 0) strideLength.value = 5 / steps;
+        };
+
+        const markBase = () => baseAngle.value = currentTilt.value;
+        const markTop = () => topAngle.value = currentTilt.value;
         const resetSession = () => { baseAngle.value = null; topAngle.value = null; };
 
         const calculatedHeight = computed(() => {
             if (baseAngle.value === null || topAngle.value === null || !slantDistance.value) return null;
-            const bR = (baseAngle.value * Math.PI) / 180;
-            const tR = (topAngle.value * Math.PI) / 180;
+            const bR = baseAngle.value * Math.PI / 180, tR = topAngle.value * Math.PI / 180;
             const hDist = slantDistance.value * Math.cos(bR);
             return Math.abs(hDist * (Math.tan(tR) - Math.tan(bR))).toFixed(2);
         });
 
-        return {
-            videoRef, currentTilt, baseAngle, topAngle, slantDistance, isWalking,
-            permissionGranted, requestPermissions, markBase, markTop, resetSession,
-            calculatedHeight, isLevel, centerX, currentY, baseLockedY, topLockedY,
-            showSettings, distMode, startCalibration, strideLength, stepCount
-        };
+        return { videoRef, currentTilt, baseAngle, topAngle, slantDistance, isWalking, permissionGranted, 
+            requestPermissions, markBase, markTop, resetSession, calculatedHeight, isLevel, centerX, currentY, 
+            baseLockedY, topLockedY, showSettings, distMode, startCalibration, strideLength, stepCount, sensorPulseWidth, togglePedometer };
     }
 }).mount('#app');
 </script>
