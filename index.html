@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Tree Height Pro</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .crosshair {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 34px; height: 34px; border: 2px solid white; border-radius: 50%; pointer-events: none; z-index: 50;
+        }
+        .is-level { border-color: #4ade80 !important; box-shadow: 0 0 20px #4ade80; }
+        video { object-fit: cover; width: 100vw; height: 100vh; }
+        .marker-base { fill: #4ade80; stroke: white; stroke-width: 2; filter: drop-shadow(0 0 5px rgba(0,0,0,0.5)); }
+        .marker-top { fill: #3b82f6; stroke: white; stroke-width: 2; filter: drop-shadow(0 0 5px rgba(0,0,0,0.5)); }
+        [v-cloak] { display: none; }
+        input[type="number"] { -moz-appearance: textfield; }
+        input::-webkit-outer-spin-button, input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    </style>
+</head>
+<body class="bg-black text-white overflow-hidden">
+
+<div id="app" v-cloak class="relative h-screen w-screen font-sans">
+    <video ref="videoRef" autoplay playsinline muted class="absolute inset-0"></video>
+    
+    <svg class="absolute inset-0 w-full h-full pointer-events-none" style="z-index: 40;">
+        <line v-if="basePos !== null" 
+            :x1="center.x" :y1="basePos" 
+            :x2="center.x" :y2="topPos || currentPos" 
+            stroke="white" stroke-width="4" stroke-dasharray="10,5" />
+        <circle v-if="basePos !== null" :cx="center.x" :cy="basePos" r="10" class="marker-base" />
+        <circle v-if="topPos !== null" :cx="center.x" :cy="topPos" r="10" class="marker-top" />
+    </svg>
+
+    <div class="crosshair" :class="{'is-level': isLevel}"></div>
+
+    <div class="absolute inset-0 flex flex-col justify-between p-6 bg-black/20">
+        <div class="bg-black/70 p-4 rounded-2xl backdrop-blur-md border border-white/10">
+            <div class="flex justify-between items-center mb-3">
+                <h1 class="font-bold text-lg tracking-tight text-green-400">Tree Height Pro</h1>
+                <button @click="showSettings = true" class="p-2 bg-white/10 rounded-full text-lg">⚙️</button>
+            </div>
+            <div class="grid grid-cols-3 gap-2 text-[10px] uppercase font-bold text-gray-400">
+                <div v-if="distMode === 'walk'">Steps: <span class="text-white block text-sm">{{ stepCount }}</span></div>
+                <div v-else>Source: <span class="text-white block text-sm">Manual</span></div>
+                <div>Ground Dist: <span class="text-white block text-sm">{{ slantDistance.toFixed(1) }}m</span></div>
+                <div>Tilt: <span class="text-white block text-sm">{{ currentTilt.toFixed(1) }}°</span></div>
+            </div>
+        </div>
+
+        <div v-if="calculatedHeight" class="self-center bg-white text-black px-10 py-5 rounded-[2rem] shadow-2xl text-center transform scale-110">
+            <p class="text-[10px] uppercase tracking-tighter font-black opacity-60">Estimated Height</p>
+            <p class="text-5xl font-black leading-none">{{ calculatedHeight }}m</p>
+        </div>
+
+        <div class="flex flex-col gap-3">
+            
+            <div v-if="distMode === 'manual'" class="bg-black/60 p-4 rounded-2xl border border-white/10 flex items-center justify-between">
+                <label class="text-xs font-bold uppercase text-gray-400">Enter Slant Distance:</label>
+                <div class="flex items-center gap-2">
+                    <input type="number" v-model.number="slantDistance" class="bg-white/10 text-white font-bold text-xl w-20 px-2 py-1 rounded-lg border border-white/20 text-center focus:outline-none focus:border-green-400">
+                    <span class="font-bold">m</span>
+                </div>
+            </div>
+
+            <button v-if="distMode === 'walk'" @click="togglePedometer" 
+                :class="isWalking ? 'bg-red-500 animate-pulse' : 'bg-white text-black'"
+                class="w-full py-4 rounded-2xl font-black transition-all active:scale-95 shadow-xl">
+                {{ isWalking ? 'STOP AT OBSERVATION POINT' : 'START AT TREE (WALK AWAY)' }}
+            </button>
+
+            <div v-if="permissionGranted" class="grid grid-cols-2 gap-4">
+                <button @click="markBase" class="bg-green-500 py-5 rounded-2xl font-black shadow-lg active:scale-95">LOCK BASE</button>
+                <button @click="markTop" :disabled="!baseAngle" class="bg-blue-500 py-5 rounded-2xl font-black shadow-lg disabled:opacity-40 active:scale-95">LOCK TOP</button>
+            </div>
+            
+            <button v-else @click="requestPermissions" class="bg-yellow-400 py-4 rounded-2xl font-black text-black">ALLOW CAMERA & SENSORS</button>
+            
+            <button @click="reset" class="text-center text-[10px] uppercase tracking-widest text-white/40 font-bold py-2">Reset Session</button>
+        </div>
+    </div>
+
+    <div v-if="showSettings" class="absolute inset-0 z-[100] bg-black/95 flex items-center justify-center p-6 backdrop-blur-xl">
+        <div class="bg-gray-900 w-full max-w-sm rounded-3xl p-6 border border-white/10 shadow-2xl">
+            <h2 class="text-xl font-bold mb-6 text-center">Measurement Settings</h2>
+            
+            <div class="space-y-6">
+                <div class="bg-white/5 p-1 rounded-xl flex">
+                    <button @click="distMode = 'walk'" :class="distMode === 'walk' ? 'bg-white text-black' : 'text-white'" class="flex-1 py-2 rounded-lg font-bold text-sm transition-all">Pedometer</button>
+                    <button @click="distMode = 'manual'" :class="distMode === 'manual' ? 'bg-white text-black' : 'text-white'" class="flex-1 py-2 rounded-lg font-bold text-sm transition-all">Manual Entry</button>
+                </div>
+
+                <div v-if="distMode === 'walk'">
+                    <label class="block text-xs uppercase font-bold text-gray-400 mb-2">Stride Length: {{ strideLength }}m</label>
+                    <input type="range" v-model.number="strideLength" min="0.4" max="1.2" step="0.01" class="w-full accent-green-500">
+                </div>
+
+                <div>
+                    <label class="block text-xs uppercase font-bold text-gray-400 mb-2">Tilt Sensitivity</label>
+                    <p class="text-[10px] text-gray-500 mb-2">Adjust if the AR markers jump too much.</p>
+                    <input type="range" v-model.number="fovPixels" min="500" max="2000" step="100" class="w-full accent-blue-500">
+                </div>
+            </div>
+
+            <button @click="showSettings = false" class="w-full mt-8 bg-green-500 text-black py-4 rounded-2xl font-black">SAVE & APPLY</button>
+        </div>
+    </div>
+</div>
+
+<script>
+const { createApp, ref, computed } = Vue;
+
+createApp({
+    setup() {
+        const videoRef = ref(null);
+        const currentTilt = ref(0);
+        const baseAngle = ref(null);
+        const topAngle = ref(null);
+        const slantDistance = ref(0);
+        const isWalking = ref(false);
+        const stepCount = ref(0);
+        const permissionGranted = ref(false);
+        const showSettings = ref(false);
+        
+        // Settings
+        const distMode = ref('walk'); // 'walk' or 'manual'
+        const strideLength = ref(0.75);
+        const sensitivity = ref(4.0);
+        const fovPixels = ref(1000); // Visual mapping sensitivity
+
+        const center = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+
+        const angleToPixels = (targetAngle) => {
+            const angleDiffRad = (targetAngle - currentTilt.value) * (Math.PI / 180);
+            return center.y + Math.tan(angleDiffRad) * fovPixels.value;
+        };
+
+        const currentPos = computed(() => center.y);
+        const basePos = computed(() => baseAngle.value !== null ? angleToPixels(baseAngle.value) : null);
+        const topPos = computed(() => topAngle.value !== null ? angleToPixels(topAngle.value) : null);
+        const isLevel = computed(() => Math.abs(currentTilt.value) < 1);
+
+        const requestPermissions = async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+                videoRef.value.srcObject = stream;
+                if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                    const res = await DeviceOrientationEvent.requestPermission();
+                    if (res === 'granted') startSensors();
+                } else { startSensors(); }
+            } catch (e) { alert("Sensors needed."); }
+        };
+
+        const startSensors = () => {
+            permissionGranted.value = true;
+            window.addEventListener('deviceorientation', (e) => {
+                currentTilt.value = e.beta - 90;
+            });
+            let lastMag = 0;
+            window.addEventListener('devicemotion', (e) => {
+                if (!isWalking.value || distMode.value !== 'walk') return;
+                const { x, y, z } = e.accelerationIncludingGravity;
+                const magnitude = Math.sqrt(x*x + y*y + z*z);
+                const delta = Math.abs(magnitude - lastMag);
+                if (delta > sensitivity.value) {
+                    stepCount.value++;
+                    slantDistance.value = stepCount.value * strideLength.value;
+                }
+                lastMag = magnitude;
+            });
+        };
+
+        const togglePedometer = () => {
+            isWalking.value = !isWalking.value;
+            if (isWalking.value) { stepCount.value = 0; slantDistance.value = 0; }
+        };
+
+        const markBase = () => { baseAngle.value = currentTilt.value; };
+        const markTop = () => { topAngle.value = currentTilt.value; };
+        const reset = () => { baseAngle.value = null; topAngle.value = null; stepCount.value = 0; slantDistance.value = 0; };
+
+        const calculatedHeight = computed(() => {
+            if (baseAngle.value === null || topAngle.value === null || !slantDistance.value) return null;
+            const baseRad = (baseAngle.value * Math.PI) / 180;
+            const topRad = (topAngle.value * Math.PI) / 180;
+            // Slant to Horizontal correction
+            const hDist = slantDistance.value * Math.cos(baseRad);
+            const h = hDist * (Math.tan(topRad) - Math.tan(baseRad));
+            return Math.abs(h).toFixed(2);
+        });
+
+        return {
+            videoRef, currentTilt, baseAngle, topAngle, slantDistance, isWalking, stepCount,
+            permissionGranted, requestPermissions, markBase, markTop, reset,
+            calculatedHeight, isLevel, center, basePos, topPos, currentPos, togglePedometer,
+            showSettings, strideLength, sensitivity, distMode, fovPixels
+        };
+    }
+}).mount('#app');
+</script>
+</body>
+</html>
