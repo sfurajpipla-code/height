@@ -9,7 +9,9 @@
     <style>
         [v-cloak] { display: none; }
         body { background-color: #000; overflow: hidden; margin: 0; font-family: sans-serif; }
-        video { object-fit: cover; width: 100vw; height: 100vh; position: absolute; inset: 0; }
+        
+        .video-container { position: absolute; inset: 0; overflow: hidden; }
+        video, canvas { object-fit: cover; width: 100vw; height: 100vh; position: absolute; inset: 0; }
 
         /* Precision Reticle */
         .crosshair {
@@ -22,15 +24,17 @@
         .is-level { border: 2px solid #4ade80 !important; box-shadow: 0 0 20px #4ade80; }
         .is-level::before, .is-level::after { background: #4ade80 !important; }
 
-        /* Positioned Controls */
-        .thumb-right {
-            position: absolute; right: 20px; bottom: max(40px, env(safe-area-inset-bottom));
+        /* Layout Controls */
+        .thumb-right-container {
+            position: absolute; right: 20px; top: 50%; transform: translateY(-50%);
+            display: flex; flex-direction: column; gap: 25px; z-index: 60;
+        }
+        
+        .thumb-left-up {
+            position: absolute; left: 20px; bottom: 35%;
             display: flex; flex-direction: column; gap: 20px; z-index: 60;
         }
-        .thumb-left-up {
-            position: absolute; left: 20px; bottom: max(140px, env(safe-area-inset-bottom));
-            z-index: 60;
-        }
+
         .settings-top {
             position: absolute; top: max(40px, env(safe-area-inset-top)); right: 20px;
             z-index: 60;
@@ -43,16 +47,19 @@
             box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 2px solid rgba(255,255,255,0.3);
             transition: all 0.1s; touch-action: manipulation; line-height: 1.1;
         }
-        .btn-float:active { transform: scale(0.95); opacity: 0.9; }
+        .btn-float:active { transform: scale(0.92); filter: brightness(1.2); }
+        .btn-active { border-color: #4ade80; box-shadow: 0 0 15px #4ade80; }
 
-        /* HUD SVG Layer */
         .hud-layer { position: absolute; inset: 0; pointer-events: none; z-index: 40; }
     </style>
 </head>
 <body class="text-white">
 
 <div id="app" v-cloak class="relative h-screen w-screen">
-    <video ref="videoRef" autoplay playsinline muted></video>
+    <div class="video-container">
+        <video ref="videoRef" autoplay playsinline muted v-show="!isFrozen"></video>
+        <canvas ref="canvasRef" v-show="isFrozen"></canvas>
+    </div>
     
     <div class="hud-layer">
         <svg class="w-full h-full">
@@ -70,7 +77,7 @@
             <p class="text-3xl font-black text-white leading-none mb-4">{{ slantDistance }}m</p>
             
             <div v-if="calculatedHeight" class="pt-4 border-t border-white/10">
-                <p class="text-[10px] text-green-400 font-black uppercase tracking-widest mb-1">Result Height</p>
+                <p class="text-[10px] text-green-400 font-black uppercase tracking-widest mb-1">Tree Height</p>
                 <p class="text-5xl font-black text-white leading-none">{{ calculatedHeight }}m</p>
             </div>
         </div>
@@ -80,28 +87,39 @@
         <button @click="showSettings = true" class="btn-float bg-zinc-900/90 text-white text-2xl">⚙️</button>
     </div>
 
-    <div class="thumb-left-up" v-if="permissionGranted && baseAngle !== null">
-        <button @click="resetSession" class="btn-float bg-yellow-500 text-black uppercase">New<br>Entry</button>
+    <div class="thumb-left-up" v-if="permissionGranted">
+        <button @click="toggleFreeze" :class="{'btn-active bg-red-600': isFrozen, 'bg-zinc-800 text-white': !isFrozen}" class="btn-float uppercase">
+            {{ isFrozen ? 'Unfreeze' : 'Freeze' }}
+        </button>
+        <button v-if="baseAngle !== null" @click="resetSession" class="btn-float bg-yellow-500 text-black uppercase">New<br>Entry</button>
     </div>
 
-    <div class="thumb-right">
-        <div v-if="permissionGranted" class="flex flex-col gap-4">
-            <button v-if="baseAngle === null" @click="markBase" class="btn-float bg-green-600 text-white uppercase">Lock<br>Base</button>
-            <template v-else>
-                <button v-if="topAngle === null" @click="markTop" class="btn-float bg-blue-600 text-white uppercase">Lock<br>Top</button>
-            </template>
-        </div>
-        <button v-else @click="requestPermissions" class="btn-float bg-blue-500 text-white uppercase">Start<br>Camera</button>
+    <div class="thumb-right-container">
+        <button v-if="!permissionGranted" @click="requestPermissions" class="btn-float bg-blue-500 text-white uppercase">Start<br>Camera</button>
+        
+        <template v-else>
+            <button @click="markTop" :disabled="baseAngle === null || topAngle !== null" 
+                class="btn-float uppercase transition-all"
+                :class="baseAngle !== null && topAngle === null ? 'bg-blue-600 text-white' : 'bg-gray-600/50 text-gray-400 opacity-50'">
+                Lock<br>Top
+            </button>
+            
+            <button @click="markBase" :disabled="baseAngle !== null"
+                class="btn-float uppercase transition-all"
+                :class="baseAngle === null ? 'bg-green-600 text-white' : 'bg-gray-600/50 text-gray-400 opacity-50'">
+                Lock<br>Base
+            </button>
+        </template>
     </div>
 
     <div v-if="showSettings" class="absolute inset-0 z-50 bg-black/95 flex items-center justify-center p-8 backdrop-blur-2xl">
         <div class="bg-zinc-900 w-full max-w-xs rounded-[2.5rem] p-8 border border-white/10 shadow-2xl text-center">
-            <h2 class="text-2xl font-black mb-6 uppercase tracking-widest">Manual Distance</h2>
+            <h2 class="text-2xl font-black mb-6 uppercase tracking-widest text-green-400">Set Distance</h2>
             <div class="mb-8">
-                <label class="block text-xs font-black text-gray-500 mb-3 uppercase tracking-widest">Enter Distance (m)</label>
                 <input type="number" v-model.number="slantDistance" class="w-full bg-white/10 py-5 rounded-2xl text-center text-4xl font-black border border-white/10 outline-none text-white focus:border-green-500 transition-colors">
+                <p class="text-xs mt-3 text-gray-400 font-bold uppercase">Meters to Tree</p>
             </div>
-            <button @click="showSettings = false" class="w-full bg-green-500 text-black py-4 rounded-2xl font-black uppercase tracking-widest">Done</button>
+            <button @click="showSettings = false" class="w-full bg-green-500 text-black py-4 rounded-2xl font-black uppercase tracking-widest">Save</button>
         </div>
     </div>
 </div>
@@ -112,12 +130,14 @@ const { createApp, ref, computed } = Vue;
 createApp({
     setup() {
         const videoRef = ref(null);
+        const canvasRef = ref(null);
         const currentTilt = ref(0);
         const baseAngle = ref(null);
         const topAngle = ref(null);
-        const slantDistance = ref(10); // Default to 10m
+        const slantDistance = ref(10); 
         const permissionGranted = ref(false);
         const showSettings = ref(false);
+        const isFrozen = ref(false);
 
         const centerX = window.innerWidth / 2;
         const currentY = window.innerHeight / 2;
@@ -135,21 +155,37 @@ createApp({
                     const res = await DeviceOrientationEvent.requestPermission();
                     if (res === 'granted') { startSensors(); permissionGranted.value = true; }
                 } else { startSensors(); permissionGranted.value = true; }
-            } catch (e) { alert("Please use HTTPS and allow camera/motion sensors."); }
+            } catch (e) { alert("Enable permissions to continue."); }
         };
 
         const startSensors = () => {
             window.addEventListener('deviceorientation', (e) => {
-                currentTilt.value = e.beta - 90;
+                // If frozen, we stop updating the tilt so the markers don't move
+                if (!isFrozen.value) {
+                    currentTilt.value = e.beta - 90;
+                }
             });
+        };
+
+        const toggleFreeze = () => {
+            if (!isFrozen.value) {
+                const video = videoRef.value;
+                const canvas = canvasRef.value;
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                canvas.getContext('2d').drawImage(video, 0, 0);
+                isFrozen.value = true;
+            } else {
+                isFrozen.value = false;
+            }
         };
 
         const markBase = () => { baseAngle.value = currentTilt.value; };
         const markTop = () => { topAngle.value = currentTilt.value; };
-        const resetSession = () => { baseAngle.value = null; topAngle.value = null; };
+        const resetSession = () => { baseAngle.value = null; topAngle.value = null; isFrozen.value = false; };
 
         const calculatedHeight = computed(() => {
-            if (baseAngle.value === null || topAngle.value === null || !slantDistance.value) return null;
+            if (baseAngle.value === null || topAngle.value === null) return null;
             const bR = (baseAngle.value * Math.PI) / 180;
             const tR = (topAngle.value * Math.PI) / 180;
             const hDist = slantDistance.value * Math.cos(bR);
@@ -158,10 +194,10 @@ createApp({
         });
 
         return {
-            videoRef, currentTilt, baseAngle, topAngle, slantDistance,
+            videoRef, canvasRef, currentTilt, baseAngle, topAngle, slantDistance,
             permissionGranted, requestPermissions, markBase, markTop, resetSession,
             calculatedHeight, isLevel, centerX, currentY, baseLockedY, topLockedY,
-            showSettings
+            showSettings, isFrozen, toggleFreeze
         };
     }
 }).mount('#app');
